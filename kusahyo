@@ -1,0 +1,199 @@
+import pyautogui as pgui
+import cv2
+import numpy as np
+import os,tkinter, tkinter.filedialog, tkinter.messagebox, time
+from PIL import Image, ImageDraw, ImageFont
+
+class mouseParam:
+    def __init__(self, input_img_name):
+        #マウス入力用のパラメータ
+        self.mouseEvent = {"x":None, "y":None, "event":None, "flags":None}
+        #マウス入力の設定
+        cv2.setMouseCallback(input_img_name, self.__CallBackFunc, None)
+
+    #コールバック関数
+    def __CallBackFunc(self, eventType, x, y, flags, userdata):
+
+        self.mouseEvent["x"] = x
+        self.mouseEvent["y"] = y
+        self.mouseEvent["event"] = eventType
+        self.mouseEvent["flags"] = flags
+
+    def getEvent(self):
+        return self.mouseEvent["event"]
+    
+    def getPos(self):
+        return [self.mouseEvent["x"], self.mouseEvent["y"]]
+ 
+#四角形の渦巻き座標リストを生成する(外側スタート)。rは巻き数
+def guruguru(r):
+    numls=[]
+    for i in range(r,0,-1):
+        thls=np.linspace(0.,np.pi*2,8*i+1)
+        thls=np.delete(thls, -1)
+        for t in thls:
+            if t >= 0. and t<=np.radians(45.):
+                numls.append([i,int(round(float(i)*np.tan(t)))])
+            elif t>=np.radians(135.) and t<=np.radians(225.):
+                numls.append([-i,-int(round(float(i)*np.tan(t)))])
+            elif t>=np.radians(315.):
+                numls.append([i,int(round(float(i)*np.tan(t)))])
+            elif t > np.radians(225.) and t < np.radians(315.):
+                numls.append([-int(round(float(i)/np.tan(t))),-i])
+            else:
+                numls.append([int(round(float(i)/np.tan(t))),i])
+
+    return numls
+
+#文字入力
+moji = "ここに文字を入力"
+
+#フォントサイズ入力
+f_size =75
+
+#エッジ検出濃度
+ed = 100
+
+#ガウシアンフィルターぼかし係数(奇数で)
+gau = 11
+
+#ポーズ時間[s]
+sp = 0.01
+
+#----------------文字取得の場合---------------------------------
+'''
+#フォントを指定(現在はMSP明朝)
+font = ImageFont.truetype("C:\Windows\Fonts\msmincho.ttc", f_size, index=1)
+
+#入力文字ごとにサイズをリスト化
+w = [0]*len(list(moji))
+h = [0]*len(list(moji))
+for i in range(len(list(moji))):
+    w[i], h[i] = font.getsize(list(moji)[i])
+    
+#文字列を画像として入力
+im = (Image.new("RGB", (sum(w),f_size), (255,255,255)))
+draw = ImageDraw.Draw(im)
+draw.text((0,0), moji, fill=(0, 0, 0), font=font)
+
+#PILLOW出力をcv2用に変換
+im = np.array(im)
+'''
+#--------------------------------------------------------
+
+#----------------画像取得の場合---------------------------------
+#参照画像ファイル読み込み(日本語の名前不可？)
+root = tkinter.Tk()
+root.withdraw()
+fTyp = [("画像ファイル","*.jpg"),("画像ファイル","*.png"),("画像ファイル","*.bmp"),("画像ファイル","*.jpeg"),("画像ファイル","*.gif"),("画像ファイル","*.pict"),("画像ファイル","*.tiff")]
+iDir = os.path.abspath(os.path.dirname(__file__))
+ORG_FILE_NAME = tkinter.filedialog.askopenfilename(filetypes = fTyp,initialdir = iDir)
+im = cv2.imread(ORG_FILE_NAME)
+#--------------------------------------------------------
+
+#ガウシアンフィルター
+blur = cv2.GaussianBlur(im,(gau,gau),0)
+
+#グレースケール
+gray_img = cv2.cvtColor(blur, cv2.IMREAD_GRAYSCALE)
+
+#エッジ検出
+canny_img = cv2.Canny(blur, ed, ed)
+invgray = cv2.bitwise_not(canny_img)
+im = invgray
+
+#画像内の余分な線を削除
+im[0:3,:]=255
+im[-3:-1,:]=255
+im[:,0:3]=255
+im[:,-3:-1]=255
+size = im.shape
+
+#スクリーンショットを撮影しフルスクリーンで表示出来るよう設定(トレース開始点のマウス入力のため)
+ss = pgui.screenshot()
+PIL2CV=np.asarray(ss)
+cv2.namedWindow('screen', cv2.WINDOW_NORMAL)
+cv2.setWindowProperty('screen', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+#フルスクリーン表示、トレース開始点をマウス入力させ座標を取得
+while True:
+    cv2.imshow('screen',PIL2CV)
+    mouseData = mouseParam('screen')
+    k = cv2.waitKey(1)
+    if mouseData.getEvent() == cv2.EVENT_LBUTTONUP:
+        xm = mouseData.getPos()[0]
+        ym = mouseData.getPos()[1]
+        cv2.destroyAllWindows()
+        break;
+        
+#画像内の黒い画素をxy座標で取得
+c=[]
+co = 0
+for x in range(size[1]):
+    for y in range(1,size[0]-1):
+        if im[y,x] == 0:
+            c.append([x+xm,y+ym])
+
+#初期処理
+#リスト内の座標を保持し削除
+m = c[0]
+c.pop(0)
+
+#マウス押下
+pgui.mouseDown(m)
+
+#マウス押下フラグ(0→押してない　1→押した)
+f = 1
+
+#リスト内のそれぞれの座標値
+x= m[0]
+y = m[1]
+
+#始点・終点を除いた曲線の座標
+ci = None
+
+#トレーススピードの設定
+pgui.PAUSE = sp
+
+#ユーザーがマウス座標を(0,0)とした場合にプログラムを止めるように設定
+pgui.FAILSAFE = True
+
+#四角形の渦巻きリストを生成
+guru = guruguru(2)
+
+#指定した点の近傍に点があるか(指定点に渦巻きリストの座標値を足し合わせその点がｃに存在するか、近くの点を優先にして)判別
+#点があった場合→マウスを検査座標に動かし、検査座標を削除
+#点がなかった場合→マウスを離し、残ったc内の座標を上から参照し保持・削除。その後保持した座標をマウス押下
+while c != []:
+    x = m[0]
+    y = m[1]
+    if f == 1:
+        cc = 0
+        for g in guru:
+            if [x+g[0],y+g[1]] in c:
+                ci=c.index([x+g[0],y+g[1]])
+                cc+=1
+        if cc == 0:
+            pgui.mouseUp(m)
+            m = c[0]
+            f = 0 
+            c.pop(0)
+        if f == 1:
+            m = c[ci]
+            c.pop(ci)
+            pgui.moveTo(m)
+    elif f == 0:
+        cc =0
+        for g in guru:
+            if [x+g[0],y+g[1]] in c:
+                cc+=1
+        if cc == 0:
+            m = c[0]
+            c.pop(0)
+        else:
+            pgui.mouseDown(m)
+            time.sleep(sp)
+            f = 1
+            
+#終了処理
+pgui.mouseUp(m)
